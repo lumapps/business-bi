@@ -1,0 +1,16 @@
+---
+selectors:
+  - name: bronze_layer
+    definition:
+      method: tag
+      value: "layer:bronze"
+
+  - name: silver_layer
+    definition:
+      method: tag
+      value: "layer:silver"
+
+  - name: gold_layer
+    definition:
+      method: tag
+      value: "layer:gold"

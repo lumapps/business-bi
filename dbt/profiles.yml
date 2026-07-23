@@ -1,0 +1,33 @@
+---
+business_bi_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: lumapps-business-bi
+      execution_project: lumapps-business-bi
+      location: EU
+      dataset: "gold"
+      timeout_seconds: 3000
+      threads: 4
+    
+    prod-from-local:
+      type: bigquery
+      method: oauth
+      project: lumapps-business-bi
+      execution_project: lumapps-business-bi
+      location: EU
+      dataset: "gold"
+      timeout_seconds: 3000
+      threads: 4
+
+    prod:
+      type: bigquery
+      method: service-account
+      keyfile: "{{ env_var('DBT_ENV_SECRET_BQ_SA') }}"
+      project: lumapps-internal-bi
+      location: EU
+      dataset: "gold"
+      timeout_seconds: 3000
+      threads: 4

@@ -1,0 +1,19 @@
+---
+# https://docs.meltano.com/guide/logging/#a-generic-starting-config-for-log-management-providers
+version: 1
+disable_existing_loggers: false
+
+formatters:
+    json:
+        (): meltano.core.logging.json_formatter
+
+handlers:
+    console:
+        class: logging.StreamHandler
+        formatter: json
+        stream: "ext://sys.stderr"
+
+root:
+    level: WARN
+    propagate: yes
+    handlers: [console]

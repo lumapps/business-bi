@@ -1,0 +1,2 @@
+meltano==4.2.2
+setuptools<81  # Pin to avoid pkg_resources removal in setuptools 81+

@@ -1,0 +1,2 @@
+# Minimal dbt dependencies for the production Docker image
+dbt-bigquery==1.12.0

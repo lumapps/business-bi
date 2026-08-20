@@ -1,0 +1,12 @@
+# Production dbt deps
+-r dbt.txt
+
+# Linting
+sqlfluff==3.3.0
+sqlfluff-templater-dbt==3.3.0
+
+# Dev tools
+pre-commit
+
+# Tests
+pytest

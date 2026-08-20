@@ -1,0 +1,5 @@
+[tools]
+python = ["3.13", "3.10"]  # 3.13 for dbt, 3.10 for meltano (z3-target-bigquery pendulum 2.x compat)
+uv = "latest"
+gcloud = "523.0.0"
+terraform = "1.12.2"

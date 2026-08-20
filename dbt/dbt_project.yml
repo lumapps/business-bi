@@ -1,0 +1,45 @@
+---
+name: business_bi
+version: "1.0.0"
+config-version: 2
+require-dbt-version: ">=1.9.0"
+
+profile: business_bi
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+    - "target"
+    - "dbt_packages"
+
+flags:
+    send_anonymous_usage_stats: false
+    use_colors: true
+    printer_width: 120
+
+seeds:
+    +schema: bronze
+
+models:
+    business_bi:
+        +persist_docs:
+            relation: true
+            columns: true
+
+        bronze:
+            +dataset: "bronze{%- if target.name == 'dev' -%}_dev{%- endif -%}"
+            +tags: [layer:bronze]
+
+        silver:
+            +dataset: "silver{%- if target.name == 'dev' -%}_dev{%- endif -%}"
+            +tags: [layer:silver]
+
+        gold:
+            +dataset: "gold{%- if target.name == 'dev' -%}_dev{%- endif -%}"
+            +tags: [layer:gold]

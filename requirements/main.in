@@ -1,3 +1,0 @@
--r dbt.txt
-
-yamllint==1.38.0

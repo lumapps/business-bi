@@ -1,0 +1,40 @@
+name: Setup dbt Python venv
+description: |
+    Installs Python 3.13, restores the dbt venv and dbt_packages from cache,
+    and runs `make sync-venv && make dbt-deps` on a miss.
+    Assumes a checkout step has already run in the calling job.
+
+inputs:
+    python-version:
+        required: false
+        default: '3.13'
+        description: Python version to install
+
+outputs:
+    cache-hit:
+        description: "'true' on an exact cache key hit"
+        value: ${{ steps.venv-cache.outputs.cache-hit }}
+
+runs:
+    using: composite
+    steps:
+        - name: Install Python ${{ inputs.python-version }}
+          uses: actions/setup-python@v5
+          with:
+              python-version: ${{ inputs.python-version }}
+
+        - name: Cache venv and dbt packages
+          uses: actions/cache@v4
+          id: venv-cache
+          with:
+              path: |
+                  venv
+                  dbt/dbt_packages
+              key: venv-${{ runner.os }}-py${{ inputs.python-version }}-${{ hashFiles('requirements/main.txt', 'dbt/packages.yml', 'dbt/package-lock.yml') }}
+              restore-keys: |
+                  venv-${{ runner.os }}-py${{ inputs.python-version }}-
+
+        - name: Install venv and dbt packages
+          if: steps.venv-cache.outputs.cache-hit != 'true'
+          shell: bash
+          run: make sync-venv && make dbt-deps

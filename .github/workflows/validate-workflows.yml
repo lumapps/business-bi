@@ -1,0 +1,17 @@
+---
+name: Validate GitHub Actions workflows
+
+on: pull_request  # yamllint disable-line rule:truthy
+
+concurrency:
+    group: ${{ github.head_ref }}-validate-workflows
+    cancel-in-progress: true
+
+jobs:
+    github-actions-validator:
+        name: GitHub Actions validator
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - uses: actions/checkout@v4
+            - uses: lumapps/github-actions-validator@v2.0.14

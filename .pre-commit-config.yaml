@@ -1,0 +1,43 @@
+ci:
+    autofix_prs: true
+    autofix_commit_msg: "style: pre-commit fixes"
+    autoupdate_schedule: monthly
+    autoupdate_commit_msg: "chore: pre-commit autoupdate"
+
+repos:
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v5.0.0
+      hooks:
+          - id: check-json
+          - id: check-toml
+          - id: check-yaml
+            args: [--allow-multiple-documents]
+          - id: end-of-file-fixer
+          - id: trailing-whitespace
+
+    - repo: https://github.com/zizmorcore/zizmor-pre-commit
+      rev: v1.26.1
+      hooks:
+          - id: zizmor
+
+    - repo: https://github.com/python-jsonschema/check-jsonschema
+      rev: 0.33.0
+      hooks:
+          - id: check-dependabot
+          - id: check-github-workflows
+          - id: check-meltano
+            files: ^meltano/meltano\.yml$
+
+    - repo: https://github.com/astral-sh/ruff-pre-commit
+      rev: v0.11.0
+      hooks:
+          - id: ruff-check
+            files: ^extractors/
+          - id: ruff-format
+            files: ^extractors/
+
+    - repo: https://github.com/adrienverge/yamllint
+      rev: v1.37.0
+      hooks:
+          - id: yamllint
+            args: [--config-file, yamllint.yaml]

@@ -1,0 +1,57 @@
+name: Get version and tag
+description: |
+    Tags follow the format `service/version` (e.g., tap-travel-perk/1.2.3 or dbt/1.0.0).
+    Extracts service, version, tag, and docker image name from the git ref.
+    Also resolves the tag author (annotated tags store the tagger, not the last committer).
+
+outputs:
+    service:
+        description: The service name (e.g., tap-travel-perk, dbt)
+        value: ${{ steps.parse.outputs.service }}
+    version:
+        description: The semver version string (e.g., 1.2.3)
+        value: ${{ steps.parse.outputs.version }}
+    tag:
+        description: The full tag (e.g., tap-travel-perk/1.2.3)
+        value: ${{ steps.parse.outputs.tag }}
+    image:
+        description: The Docker image name (e.g., meltano-tap-travel-perk, dbt)
+        value: ${{ steps.parse.outputs.image }}
+    author_name:
+        description: Name of the person who created the tag
+        value: ${{ steps.author.outputs.author_name }}
+    author_email:
+        description: Email of the person who created the tag
+        value: ${{ steps.author.outputs.author_email }}
+
+runs:
+    using: composite
+    steps:
+        - name: Parse tag
+          id: parse
+          shell: bash
+          run: |
+              SERVICE=$(echo "${{ github.ref }}" | cut -d '/' -f 3)
+              VERSION=$(echo "${{ github.ref }}" | cut -d '/' -f 4)
+              TAG="$SERVICE/$VERSION"
+              if [[ "$SERVICE" == "dbt" ]]; then
+                IMAGE="dbt"
+              else
+                IMAGE="meltano-$SERVICE"
+              fi
+              echo "service=$SERVICE" >> $GITHUB_OUTPUT
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+              echo "tag=$TAG" >> $GITHUB_OUTPUT
+              echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+        - name: Get tag author
+          id: author
+          shell: bash
+          run: |
+              git fetch origin "+refs/tags/${{ steps.parse.outputs.tag }}:refs/tags/${{ steps.parse.outputs.tag }}"
+              AUTHOR_NAME=$(git for-each-ref "refs/tags/${{ steps.parse.outputs.tag }}" \
+                --format="%(if)%(taggername)%(then)%(taggername)%(else)%(authorname)%(end)")
+              AUTHOR_EMAIL=$(git for-each-ref "refs/tags/${{ steps.parse.outputs.tag }}" \
+                --format="%(if)%(taggeremail:trim)%(then)%(taggeremail)%(else)%(authoremail)%(end)")
+              echo "author_name=$AUTHOR_NAME" >> $GITHUB_OUTPUT
+              echo "author_email=$AUTHOR_EMAIL" >> $GITHUB_OUTPUT

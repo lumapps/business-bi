@@ -1,0 +1,38 @@
+name: Setup Meltano Python venv
+description: |
+    Installs Python 3.10, restores the meltano venv from cache,
+    and runs `make sync-venv-meltano` on a miss.
+    Assumes a checkout step has already run in the calling job.
+
+inputs:
+    python-version:
+        required: false
+        default: '3.10'
+        description: Python version to install
+
+outputs:
+    cache-hit:
+        description: "'true' on an exact cache key hit"
+        value: ${{ steps.venv-cache.outputs.cache-hit }}
+
+runs:
+    using: composite
+    steps:
+        - name: Install Python ${{ inputs.python-version }}
+          uses: actions/setup-python@v5
+          with:
+              python-version: ${{ inputs.python-version }}
+
+        - name: Cache meltano venv
+          uses: actions/cache@v4
+          id: venv-cache
+          with:
+              path: venv-meltano
+              key: venv-meltano-${{ runner.os }}-py${{ inputs.python-version }}-${{ hashFiles('requirements/meltano.txt') }}
+              restore-keys: |
+                  venv-meltano-${{ runner.os }}-py${{ inputs.python-version }}-
+
+        - name: Install meltano venv
+          if: steps.venv-cache.outputs.cache-hit != 'true'
+          shell: bash
+          run: make sync-venv-meltano

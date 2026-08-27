@@ -1,0 +1,233 @@
+---
+name: "CD: Release"
+
+on:
+    push:
+        tags:
+            - 'dbt/[0-9]+.[0-9]+.[0-9]+'
+            - 'tap-*/[0-9]+.[0-9]+.[0-9]+'
+    workflow_dispatch:
+        inputs:
+            test_tag:
+                description: 'Simulated tag for dry-run testing (e.g., tap-travel-perk/9.9.9-test)'
+                required: true
+                type: string
+            dry_run:
+                description: 'Dry run — skip image push and Cloud Run update'
+                required: true
+                type: boolean
+                default: true
+
+concurrency:
+    group: "${{ github.workflow }}-${{ github.ref_name }}"
+    cancel-in-progress: true
+
+env:
+    REGISTRY: europe-west1-docker.pkg.dev/lumapps-business-bi/bi
+    GCP_PROJECT: lumapps-business-bi
+    GCP_REGION: europe-west1
+
+jobs:
+    # ─── Parse the tag ────────────────────────────────────────────────────────
+
+    setup:
+        name: Parse tag
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        outputs:
+            service: ${{ steps.info.outputs.service }}
+            version: ${{ steps.info.outputs.version }}
+            tag: ${{ steps.info.outputs.tag }}
+            image: ${{ steps.info.outputs.image }}
+            dockerfile: ${{ steps.info.outputs.dockerfile }}
+            cloud_run_job: ${{ steps.info.outputs.cloud_run_job }}
+            build_args: ${{ steps.info.outputs.build_args }}
+            author_name: ${{ steps.info.outputs.author_name }}
+            author_email: ${{ steps.info.outputs.author_email }}
+            is_dry_run: ${{ steps.dry_run.outputs.is_dry_run }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Resolve tag from push event
+              id: from_tag
+              if: github.event_name == 'push'
+              uses: ./.github/actions/get-version-and-tag
+
+            - name: Resolve tag from workflow_dispatch input
+              id: from_dispatch
+              if: github.event_name == 'workflow_dispatch'
+              shell: bash
+              run: |
+                  TAG="${{ inputs.test_tag }}"
+                  SERVICE=$(echo "$TAG" | cut -d '/' -f 1)
+                  VERSION=$(echo "$TAG" | cut -d '/' -f 2)
+                  if [[ "$SERVICE" == "dbt" ]]; then IMAGE="dbt"; else IMAGE="meltano-$SERVICE"; fi
+                  echo "service=$SERVICE" >> $GITHUB_OUTPUT
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+                  echo "tag=$TAG" >> $GITHUB_OUTPUT
+                  echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+            - name: Compute service-specific values
+              id: info
+              run: |
+                  if [[ "${{ github.event_name }}" == "push" ]]; then
+                    SERVICE="${{ steps.from_tag.outputs.service }}"
+                    VERSION="${{ steps.from_tag.outputs.version }}"
+                    TAG="${{ steps.from_tag.outputs.tag }}"
+                    IMAGE="${{ steps.from_tag.outputs.image }}"
+                    AUTHOR_NAME="${{ steps.from_tag.outputs.author_name }}"
+                    AUTHOR_EMAIL="${{ steps.from_tag.outputs.author_email }}"
+                  else
+                    SERVICE="${{ steps.from_dispatch.outputs.service }}"
+                    VERSION="${{ steps.from_dispatch.outputs.version }}"
+                    TAG="${{ steps.from_dispatch.outputs.tag }}"
+                    IMAGE="${{ steps.from_dispatch.outputs.image }}"
+                    AUTHOR_NAME="${{ github.actor }}"
+                    AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com"
+                  fi
+
+                  if [[ "$SERVICE" == "dbt" ]]; then
+                    DOCKERFILE="infra/docker/dbt.Dockerfile"
+                    CLOUD_RUN_JOB="dbt"
+                    BUILD_ARGS=""
+                  else
+                    DOCKERFILE="infra/docker/meltano.Dockerfile"
+                    CLOUD_RUN_JOB="meltano-$SERVICE"
+                    BUILD_ARGS="TAP_NAME=$SERVICE"
+                  fi
+
+                  echo "service=$SERVICE" >> $GITHUB_OUTPUT
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+                  echo "tag=$TAG" >> $GITHUB_OUTPUT
+                  echo "image=$IMAGE" >> $GITHUB_OUTPUT
+                  echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
+                  echo "cloud_run_job=$CLOUD_RUN_JOB" >> $GITHUB_OUTPUT
+                  echo "build_args=$BUILD_ARGS" >> $GITHUB_OUTPUT
+                  echo "author_name=$AUTHOR_NAME" >> $GITHUB_OUTPUT
+                  echo "author_email=$AUTHOR_EMAIL" >> $GITHUB_OUTPUT
+
+            - name: Check dry-run mode
+              id: dry_run
+              run: |
+                  if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+                    echo "is_dry_run=true" >> $GITHUB_OUTPUT
+                    echo "::warning::DRY RUN — image push and Cloud Run update will be skipped"
+                  else
+                    echo "is_dry_run=false" >> $GITHUB_OUTPUT
+                  fi
+
+    # ─── Changelog + GitHub Release ───────────────────────────────────────────
+
+    release-notes:
+        name: Create GitHub release
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        needs: [setup]
+        outputs:
+            release_note: ${{ env.CHANGELOG }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Generate changelog
+              id: changelog
+              uses: lumapps/changelog-generator@1.1.5
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  tag_prefix: ${{ needs.setup.outputs.service }}
+
+            - name: Create GitHub release
+              if: needs.setup.outputs.is_dry_run != 'true'
+              uses: ncipollo/release-action@v1
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  allowUpdates: true
+                  tag: ${{ github.ref }}
+                  name: "Release ${{ needs.setup.outputs.tag }}"
+                  body: ${{ env.CHANGELOG }}
+
+            - name: Skip release (dry run)
+              if: needs.setup.outputs.is_dry_run == 'true'
+              run: echo "::notice::DRY RUN — skipping GitHub release creation"
+
+    # ─── Build + push Docker image ────────────────────────────────────────────
+
+    build-push:
+        name: Build and push image
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        needs: [setup]
+        if: needs.setup.outputs.is_dry_run != 'true'
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Build and push ${{ needs.setup.outputs.image }}
+              uses: ./.github/actions/build-push-image
+              with:
+                  wif_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+                  wif_service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+                  image: ${{ needs.setup.outputs.image }}
+                  version: ${{ needs.setup.outputs.version }}
+                  dockerfile: ${{ needs.setup.outputs.dockerfile }}
+                  build_args: ${{ needs.setup.outputs.build_args }}
+
+    # ─── Update Cloud Run Job ─────────────────────────────────────────────────
+
+    update-cloud-run:
+        name: Update Cloud Run Job
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        needs: [setup, build-push]
+        if: needs.setup.outputs.is_dry_run != 'true'
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - name: Authenticate to GCP
+              uses: google-github-actions/auth@v2
+              with:
+                  workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+                  service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+            - name: Update Cloud Run Job image
+              uses: google-github-actions/deploy-cloudrun@v2
+              with:
+                  job: ${{ needs.setup.outputs.cloud_run_job }}
+                  image: ${{ env.REGISTRY }}/${{ needs.setup.outputs.image }}:${{ needs.setup.outputs.version }}
+                  project_id: ${{ env.GCP_PROJECT }}
+                  region: ${{ env.GCP_REGION }}
+
+    # ─── Summary notification (always runs) ───────────────────────────────────
+
+    notify:
+        name: Release summary
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        needs: [setup, release-notes, build-push, update-cloud-run]
+        if: always()
+        steps:
+            - name: Print release summary
+              run: |
+                  echo "## Release summary" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "| Field        | Value |" >> $GITHUB_STEP_SUMMARY
+                  echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+                  echo "| Tag          | \`${{ needs.setup.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+                  echo "| Version      | \`${{ needs.setup.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+                  echo "| Image        | \`${{ env.REGISTRY }}/${{ needs.setup.outputs.image }}:${{ needs.setup.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+                  echo "| Cloud Run    | \`${{ needs.setup.outputs.cloud_run_job }}\` |" >> $GITHUB_STEP_SUMMARY
+                  echo "| Released by  | ${{ needs.setup.outputs.author_name }} (${{ needs.setup.outputs.author_email }}) |" >> $GITHUB_STEP_SUMMARY
+                  echo "| Dry run      | ${{ needs.setup.outputs.is_dry_run }} |" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "| Job                | Result |" >> $GITHUB_STEP_SUMMARY
+                  echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+                  echo "| release-notes      | ${{ needs.release-notes.result }} |" >> $GITHUB_STEP_SUMMARY
+                  echo "| build-push         | ${{ needs.build-push.result }} |" >> $GITHUB_STEP_SUMMARY
+                  echo "| update-cloud-run   | ${{ needs.update-cloud-run.result }} |" >> $GITHUB_STEP_SUMMARY

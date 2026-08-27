@@ -1,0 +1,73 @@
+name: Build and push Docker image
+description: |
+    Authenticates to GCP via Workload Identity Federation, builds the Docker image
+    with Buildx layer caching, and pushes versioned + latest tags to Artifact Registry.
+
+inputs:
+    wif_provider:
+        required: true
+        description: Workload Identity Federation provider resource name
+    wif_service_account:
+        required: true
+        description: Service account email to impersonate via WIF
+    registry:
+        required: false
+        default: 'europe-west1-docker.pkg.dev/lumapps-business-bi/bi'
+        description: Artifact Registry host/project/repo (no trailing slash)
+    image:
+        required: true
+        description: Image name without registry prefix (e.g., dbt, meltano-tap-travel-perk)
+    version:
+        required: true
+        description: Semver version string used to tag the image (e.g., 1.2.3)
+    dockerfile:
+        required: true
+        description: Path to Dockerfile relative to repo root
+    build_args:
+        required: false
+        default: ''
+        description: Newline-separated Docker build-arg values (e.g., TAP_NAME=tap-travel-perk)
+
+outputs:
+    image_tag:
+        description: Full image reference with version tag that was pushed
+        value: ${{ steps.meta.outputs.image_tag }}
+
+runs:
+    using: composite
+    steps:
+        - name: Authenticate to GCP
+          uses: google-github-actions/auth@v2
+          with:
+              workload_identity_provider: ${{ inputs.wif_provider }}
+              service_account: ${{ inputs.wif_service_account }}
+
+        - name: Configure Docker for Artifact Registry
+          shell: bash
+          run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+
+        - name: Compute image tags
+          id: meta
+          shell: bash
+          run: |
+              VERSIONED="${{ inputs.registry }}/${{ inputs.image }}:${{ inputs.version }}"
+              LATEST="${{ inputs.registry }}/${{ inputs.image }}:latest"
+              echo "image_tag=$VERSIONED" >> $GITHUB_OUTPUT
+              printf 'tags<<EOF\n%s\n%s\nEOF\n' "$VERSIONED" "$LATEST" >> $GITHUB_OUTPUT
+
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v3
+
+        - name: Build and push image
+          uses: docker/build-push-action@v6
+          with:
+              context: .
+              file: ${{ inputs.dockerfile }}
+              push: true
+              tags: ${{ steps.meta.outputs.tags }}
+              build-args: |
+                  GIT_VERSION=${{ inputs.version }}
+                  GIT_SHA1=${{ github.sha }}
+                  ${{ inputs.build_args }}
+              cache-from: type=gha,scope=${{ inputs.image }}
+              cache-to: type=gha,scope=${{ inputs.image }},mode=max

@@ -1,0 +1,41 @@
+---
+name: "CI: Meltano validator"
+
+on:
+    pull_request:
+
+concurrency:
+    group: ${{ github.head_ref }}-meltano
+    cancel-in-progress: true
+
+jobs:
+    changes:
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        outputs:
+            meltano: ${{ steps.filter.outputs.meltano }}
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dorny/paths-filter@v3
+              id: filter
+              with:
+                  filters: |
+                      meltano:
+                          - 'meltano/**'
+                          - 'extractors/**'
+                          - 'requirements/meltano.txt'
+
+    meltano-install:
+        name: Meltano install check
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        needs: [changes]
+        if: needs.changes.outputs.meltano == 'true' && github.event.pull_request.draft == false
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Meltano venv
+              uses: ./.github/actions/setup-venv-meltano
+
+            - name: Check meltano install
+              run: venv-meltano/bin/meltano --cwd meltano install --clean

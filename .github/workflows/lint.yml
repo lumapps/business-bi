@@ -1,0 +1,35 @@
+---
+name: Linters
+
+on:
+    pull_request:
+
+concurrency:
+    group: ${{ github.head_ref }}-linters
+    cancel-in-progress: true
+
+jobs:
+    pre-commit:
+        name: Pre-commit
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        if: github.event.pull_request.draft == false
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: '3.13'
+
+            - name: Cache pre-commit envs
+              uses: actions/cache@v4
+              with:
+                  path: /tmp/.cache/pre-commit
+                  key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+            - name: Run pre-commit
+              uses: pre-commit/action@v3.0.1
+              with:
+                  extra_args: --all-files --show-diff-on-failure --color=always
+              env:
+                  PRE_COMMIT_HOME: /tmp/.cache/pre-commit

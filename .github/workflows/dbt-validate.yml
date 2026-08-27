@@ -1,0 +1,91 @@
+---
+name: "CI: dbt validate"
+
+on:
+    pull_request:
+
+concurrency:
+    group: ${{ github.head_ref }}-dbt-validate
+    cancel-in-progress: true
+
+jobs:
+    changes:
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        outputs:
+            dbt: ${{ steps.filter.outputs.dbt }}
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dorny/paths-filter@v3
+              id: filter
+              with:
+                  filters: |
+                      dbt:
+                          - 'dbt/**'
+                          - 'requirements/dbt.txt'
+                          - 'requirements/main.txt'
+
+    validate-profiles:
+        name: Validate dbt profiles
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        needs: [changes]
+        if: needs.changes.outputs.dbt == 'true' && github.event.pull_request.draft == false
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Assert profiles only reference lumapps-business-bi
+              run: |
+                  python3 - <<'EOF'
+                  import sys
+                  import yaml
+
+                  with open("dbt/profiles.yml") as f:
+                      profiles = yaml.safe_load(f)
+
+                  errors = []
+                  expected_project = "lumapps-business-bi"
+
+                  for profile_name, profile in profiles.items():
+                      for output_name, output in profile.get("outputs", {}).items():
+                          for field in ("project", "execution_project"):
+                              value = output.get(field)
+                              if value and value != expected_project:
+                                  errors.append(
+                                      f"profiles.yml [{profile_name}.outputs.{output_name}.{field}] "
+                                      f"= '{value}', expected '{expected_project}'"
+                                  )
+
+                  if errors:
+                      for e in errors:
+                          print(f"ERROR: {e}", file=sys.stderr)
+                      sys.exit(1)
+
+                  print("profiles.yml OK — all project references are correct")
+                  EOF
+
+    dbt-parse:
+        name: dbt parse
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        needs: [changes]
+        if: needs.changes.outputs.dbt == 'true' && github.event.pull_request.draft == false
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up dbt venv
+              uses: ./.github/actions/setup-venv
+
+            - name: Run dbt parse
+              # dbt parse compiles all SQL/Jinja without connecting to BigQuery.
+              # It catches model-level syntax errors, missing refs, and bad macros.
+              run: |
+                  venv/bin/dbt parse \
+                      --project-dir dbt \
+                      --profiles-dir dbt \
+                      --target dev \
+                      --no-version-check
+              env:
+                  # dbt parse with oauth target still requires a project — it won't
+                  # actually connect, but the profile must load cleanly.
+                  DBT_TARGET: dev
